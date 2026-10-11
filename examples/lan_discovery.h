@@ -43,7 +43,6 @@ public:
 private:
 	std::atomic<bool> m_bRunning{ false };
 	std::thread m_thread;
-	int m_socket = -1;
 
 	void BeaconThread( uint16 nGnsPort, std::string strServerName, uint16 nDiscoveryPort );
 };

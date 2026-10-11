@@ -26,7 +26,35 @@
 	typedef int socklen_t;
 	inline int GetSocketError() { return WSAGetLastError(); }
 	#define poll WSAPoll
+
+	struct ScopedWinsockInit_t
+	{
+		ScopedWinsockInit_t()
+		{
+			WSADATA wsaData;
+			WSAStartup( MAKEWORD( 2, 2 ), &wsaData );
+		}
+		~ScopedWinsockInit_t()
+		{
+			WSACleanup();
+		}
+	};
 #endif
+
+// Helper: score IP address (prefer physical LAN over container/virtual bridge)
+static int ScoreIPAddress( const char *pszIP )
+{
+	// 192.168.x.x / 10.x.x.x -> highest priority (real home/office Wi-Fi and LAN)
+	if ( strncmp( pszIP, "192.168.", 8 ) == 0 || strncmp( pszIP, "10.", 3 ) == 0 )
+		return 100;
+	// 127.x.x.x -> local loopback
+	if ( strncmp( pszIP, "127.", 4 ) == 0 )
+		return 50;
+	// 172.16-31.x.x (often Docker or container virtual bridge) -> lower priority
+	if ( strncmp( pszIP, "172.", 4 ) == 0 )
+		return 10;
+	return 30;
+}
 
 CLanDiscoveryBeacon::CLanDiscoveryBeacon()
 {
@@ -52,11 +80,6 @@ void CLanDiscoveryBeacon::Stop()
 {
 	if ( m_bRunning.exchange( false ) )
 	{
-		if ( m_socket != (int)INVALID_SOCKET )
-		{
-			closesocket( (SOCKET)m_socket );
-			m_socket = (int)INVALID_SOCKET;
-		}
 		if ( m_thread.joinable() )
 			m_thread.join();
 	}
@@ -64,13 +87,16 @@ void CLanDiscoveryBeacon::Stop()
 
 void CLanDiscoveryBeacon::BeaconThread( uint16 nGnsPort, std::string strServerName, uint16 nDiscoveryPort )
 {
+#ifdef _WIN32
+	ScopedWinsockInit_t winsock;
+#endif
+
 	SOCKET fd = socket( AF_INET, SOCK_DGRAM, 0 );
 	if ( fd == INVALID_SOCKET )
 	{
 		fprintf( stderr, "[LAN Discovery] Failed to create UDP socket: %d\n", GetSocketError() );
 		return;
 	}
-	m_socket = (int)fd;
 
 	int opt = 1;
 	setsockopt( fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&opt, sizeof(opt) );
@@ -84,7 +110,6 @@ void CLanDiscoveryBeacon::BeaconThread( uint16 nGnsPort, std::string strServerNa
 	{
 		fprintf( stderr, "[LAN Discovery] Failed to bind beacon port %d: %d\n", nDiscoveryPort, GetSocketError() );
 		closesocket( fd );
-		m_socket = (int)INVALID_SOCKET;
 		return;
 	}
 
@@ -97,7 +122,7 @@ void CLanDiscoveryBeacon::BeaconThread( uint16 nGnsPort, std::string strServerNa
 		pfd.fd = fd;
 		pfd.events = POLLIN;
 
-		int rc = poll( &pfd, 1, 200 );
+		int rc = poll( &pfd, 1, 100 );
 		if ( rc <= 0 || !m_bRunning )
 			continue;
 
@@ -135,13 +160,17 @@ void CLanDiscoveryBeacon::BeaconThread( uint16 nGnsPort, std::string strServerNa
 		}
 	}
 
+	// Close cleanly exactly once upon loop exit
 	closesocket( fd );
-	m_socket = (int)INVALID_SOCKET;
 }
 
 bool CLanDiscoveryClient::Discover( std::vector<DiscoveredServer_t> &outServers, int nTimeoutMs, uint16 nDiscoveryPort )
 {
 	outServers.clear();
+
+#ifdef _WIN32
+	ScopedWinsockInit_t winsock;
+#endif
 
 	SOCKET fd = socket( AF_INET, SOCK_DGRAM, 0 );
 	if ( fd == INVALID_SOCKET )
@@ -172,13 +201,22 @@ bool CLanDiscoveryClient::Discover( std::vector<DiscoveredServer_t> &outServers,
 	}
 
 	int nRemainingMs = nTimeoutMs;
+	int nLastBroadcastRemainingMs = nTimeoutMs;
+
 	while ( nRemainingMs > 0 )
 	{
+		// Retransmit query every 500ms to tolerate wireless packet loss on consumer Wi-Fi
+		if ( ( nLastBroadcastRemainingMs - nRemainingMs ) >= 500 )
+		{
+			sendto( fd, szRequest, sizeof(szRequest) - 1, 0, (sockaddr *)&targetAddr, sizeof(targetAddr) );
+			nLastBroadcastRemainingMs = nRemainingMs;
+		}
+
 		pollfd pfd{};
 		pfd.fd = fd;
 		pfd.events = POLLIN;
 
-		int nPollMs = ( nRemainingMs > 200 ) ? 200 : nRemainingMs;
+		int nPollMs = ( nRemainingMs > 100 ) ? 100 : nRemainingMs;
 		int rc = poll( &pfd, 1, nPollMs );
 		nRemainingMs -= nPollMs;
 
@@ -232,7 +270,21 @@ bool CLanDiscoveryClient::Discover( std::vector<DiscoveredServer_t> &outServers,
 			}
 
 			if ( !bAlreadyFound )
-				outServers.push_back( srv );
+			{
+				if ( !outServers.empty() )
+				{
+					char szExistingIP[64];
+					outServers[0].m_addr.ToString( szExistingIP, sizeof(szExistingIP), false );
+					if ( ScoreIPAddress( szFromIP ) > ScoreIPAddress( szExistingIP ) )
+						outServers.insert( outServers.begin(), srv );
+					else
+						outServers.push_back( srv );
+				}
+				else
+				{
+					outServers.push_back( srv );
+				}
+			}
 		}
 	}
 
