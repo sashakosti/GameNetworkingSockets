@@ -42,6 +42,7 @@ if(ENABLE_ICE)
 	target_link_libraries(test_p2p GameNetworkingSockets::static_mock)
 	if( TARGET OpenSSL::SSL )
 		target_link_libraries(test_p2p OpenSSL::SSL)
+		target_compile_definitions(test_p2p PRIVATE XMPP_HAS_OPENSSL=1)
 	endif()
 	add_sanitizers(test_p2p)
 

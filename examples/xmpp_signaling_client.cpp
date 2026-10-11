@@ -89,8 +89,10 @@ static bool SplitHostPort( const char *pszAddress, std::string &sHost, std::stri
 	return !sHost.empty();
 }
 
-#include <openssl/ssl.h>
-#include <openssl/err.h>
+#if defined(XMPP_HAS_OPENSSL) && XMPP_HAS_OPENSSL
+	#include <openssl/ssl.h>
+	#include <openssl/err.h>
+#endif
 
 static const char s_chBase64Table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -289,6 +291,8 @@ class CXmppSignalingClient : public IXmppSignalingClient
 		{
 		}
 
+		virtual ~ConnectionSignaling() {}
+
 		virtual bool SendSignal( HSteamNetConnection hConn, const SteamNetConnectionInfo_t &info, const void *pMsg, int cbMsg ) override
 		{
 			(void)info;
@@ -311,8 +315,10 @@ class CXmppSignalingClient : public IXmppSignalingClient
 
 	std::recursive_mutex m_sockMutex;
 	SOCKET m_sock;
+#if defined(XMPP_HAS_OPENSSL) && XMPP_HAS_OPENSSL
 	SSL_CTX *m_pSSLCtx;
 	SSL *m_pSSL;
+#endif
 	std::deque< std::string > m_queueSend;
 	std::string m_sBufferedData;
 	bool m_bConnected;
@@ -356,8 +362,10 @@ public:
 	, m_sPassword( pszPassword )
 	, m_bUseTLS( bUseTLS )
 	, m_sock( INVALID_SOCKET )
+#if defined(XMPP_HAS_OPENSSL) && XMPP_HAS_OPENSSL
 	, m_pSSLCtx( nullptr )
 	, m_pSSL( nullptr )
+#endif
 	, m_bConnected( false )
 	, m_bAuthSent( false )
 	{
@@ -374,6 +382,7 @@ public:
 	void CloseSocket()
 	{
 		std::lock_guard< std::recursive_mutex > lock( m_sockMutex );
+#if defined(XMPP_HAS_OPENSSL) && XMPP_HAS_OPENSSL
 		if ( m_pSSL != nullptr )
 		{
 			SSL_shutdown( m_pSSL );
@@ -385,6 +394,7 @@ public:
 			SSL_CTX_free( m_pSSLCtx );
 			m_pSSLCtx = nullptr;
 		}
+#endif
 		if ( m_sock != INVALID_SOCKET )
 		{
 			closesocket( m_sock );
@@ -422,6 +432,7 @@ public:
 
 		if ( m_bUseTLS )
 		{
+#if defined(XMPP_HAS_OPENSSL) && XMPP_HAS_OPENSSL
 			m_pSSLCtx = SSL_CTX_new( TLS_client_method() );
 			if ( m_pSSLCtx != nullptr )
 			{
@@ -432,6 +443,10 @@ public:
 					SSL_set_connect_state( m_pSSL );
 				}
 			}
+#else
+			CloseSocket();
+			return;
+#endif
 		}
 
 		std::string sStreamOpen = "<?xml version='1.0'?><stream:stream to='";
@@ -516,6 +531,7 @@ public:
 
 			if ( !m_bConnected )
 			{
+#if defined(XMPP_HAS_OPENSSL) && XMPP_HAS_OPENSSL
 				if ( m_bUseTLS && m_pSSL != nullptr )
 				{
 					int r = SSL_connect( m_pSSL );
@@ -535,6 +551,7 @@ public:
 					}
 				}
 				else
+#endif
 				{
 					if ( pfd.revents & ( POLLOUT | POLLIN ) )
 					{
@@ -561,6 +578,7 @@ public:
 				for (;;)
 				{
 					int r = 0;
+#if defined(XMPP_HAS_OPENSSL) && XMPP_HAS_OPENSSL
 					if ( m_bUseTLS && m_pSSL != nullptr )
 					{
 						r = SSL_read( m_pSSL, buf, sizeof( buf ) );
@@ -576,6 +594,7 @@ public:
 						}
 					}
 					else
+#endif
 					{
 						r = recv( m_sock, buf, sizeof( buf ), 0 );
 						if ( r <= 0 )
@@ -601,6 +620,7 @@ public:
 					const std::string &s = m_queueSend.front();
 					int l = (int)s.length();
 					int r = 0;
+#if defined(XMPP_HAS_OPENSSL) && XMPP_HAS_OPENSSL
 					if ( m_bUseTLS && m_pSSL != nullptr )
 					{
 						r = SSL_write( m_pSSL, s.c_str(), l );
@@ -616,6 +636,7 @@ public:
 						}
 					}
 					else
+#endif
 					{
 						r = ::send( m_sock, s.c_str(), l, 0 );
 						if ( r <= 0 )
@@ -712,7 +733,15 @@ IXmppSignalingClient *CreateXmppSignalingClient(
 	SteamNetworkingErrMsg &errMsg
 )
 {
+#if !defined(XMPP_HAS_OPENSSL) || !XMPP_HAS_OPENSSL
+	if ( bUseTLS )
+	{
+		sprintf( errMsg, "TLS requested but XMPP signaling client was built without OpenSSL support." );
+		return nullptr;
+	}
+#endif
 	ScopedWinsockInit_t winsock;
+	(void)winsock;
 	std::string sAddress, sPort;
 	if ( !SplitHostPort( pszServerAddress, sAddress, sPort, bUseTLS ? "5223" : "5222" ) )
 	{

@@ -31,6 +31,7 @@ if( ENABLE_ICE AND ( BUILD_EXAMPLES OR BUILD_TESTS ) )
 	target_link_libraries(xmpp_signaling_client PUBLIC GameNetworkingSockets::shared)
 	if( TARGET OpenSSL::SSL )
 		target_link_libraries(xmpp_signaling_client PUBLIC OpenSSL::SSL)
+		target_compile_definitions(xmpp_signaling_client PUBLIC XMPP_HAS_OPENSSL=1)
 	endif()
 endif()
 
