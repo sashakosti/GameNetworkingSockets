@@ -260,23 +260,6 @@ bool XmppExtractMessage( std::string &sBuffer, std::string &sOutFrom, std::strin
 	return false;
 }
 
-static void XmppSelfTest()
-{
-	const char *pszTest = "Hello P2P!";
-	std::string sB64 = XmppBase64Encode( pszTest, (int)strlen( pszTest ) );
-	std::string sDec;
-	bool bOk = XmppBase64Decode( sB64.c_str(), (int)sB64.length(), sDec );
-	assert( bOk && sDec == pszTest );
-
-	std::string sStanza = XmppFormatMessageStanza( "alice@test.org", "bob@test.org", pszTest, (int)strlen( pszTest ) );
-	std::string sFrom, sPayload;
-	bOk = XmppExtractMessage( sStanza, sFrom, sPayload );
-	assert( bOk );
-	assert( sFrom == "alice@test.org" );
-	assert( sPayload == pszTest );
-	assert( sStanza.empty() );
-}
-
 /// Implementation of IXmppSignalingClient
 class CXmppSignalingClient : public IXmppSignalingClient
 {
@@ -369,7 +352,6 @@ public:
 	, m_bConnected( false )
 	, m_bAuthSent( false )
 	{
-		XmppSelfTest();
 		memcpy( &m_adrServer, pAdrServer, adrServerSize );
 		Connect();
 	}

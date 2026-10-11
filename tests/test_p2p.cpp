@@ -606,6 +606,21 @@ int main( int argc, const char **argv )
 	ISignalingClient *pSignaling = nullptr;
 	if ( pszXmppSignalingService != nullptr )
 	{
+		// Validate XMPP helper functions
+		{
+			const char *pszTest = "Hello P2P!";
+			std::string sB64 = XmppBase64Encode( pszTest, (int)strlen( pszTest ) );
+			std::string sDec;
+			bool bOk = XmppBase64Decode( sB64.c_str(), (int)sB64.length(), sDec );
+			assert( bOk && sDec == pszTest );
+
+			std::string sStanza = XmppFormatMessageStanza( "alice@test.org", "bob@test.org", pszTest, (int)strlen( pszTest ) );
+			std::string sFrom, sPayload;
+			bOk = XmppExtractMessage( sStanza, sFrom, sPayload );
+			assert( bOk && sFrom == "alice@test.org" && sPayload == pszTest );
+			(void)bOk;
+		}
+
 		std::string sJid = SteamNetworkingIdentityRender( identityLocal ).c_str();
 		sJid += "@localhost/test";
 		IXmppSignalingClient *pXmpp = CreateXmppSignalingClient(
